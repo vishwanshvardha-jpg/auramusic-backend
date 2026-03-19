@@ -96,9 +96,11 @@ export const addSong = async (req: AuthRequest, res: Response) => {
   try {
     const result = await playlistService.addSongToPlaylist(playlistId, track, req.user.id);
     return res.json(result);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Add Song Error:", error);
-    return res.status(500).json({ error: "Internal Server Error" });
+    const status = error.status ?? 500;
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
   }
 };
 

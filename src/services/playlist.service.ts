@@ -6,7 +6,7 @@ const listAllUsers = async () => {
   let page = 1;
   const perPage = 1000;
   while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, per_page: perPage });
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
     if (error) throw error;
     allUsers.push(...data.users);
     if (data.users.length < perPage) break;
@@ -120,6 +120,7 @@ export const getCollaborators = async (playlistId: string, callerId: string) => 
       .select("id")
       .eq("playlist_id", playlistId)
       .eq("user_id", callerId)
+      .eq("status", "accepted")
       .maybeSingle();
 
     if (collabError) throw collabError;
@@ -241,6 +242,7 @@ export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, 
       .eq("playlist_id", playlistId)
       .eq("user_id", callerId)
       .eq("role", "editor")
+      .eq("status", "accepted")
       .maybeSingle();
 
     if (collabError) throw collabError;
@@ -313,29 +315,32 @@ export const respondToInvite = async (
   userId: string,
   status: "accepted" | "declined"
 ) => {
-  const { data: row, error: fetchError } = await supabase
-    .from("playlist_collaborators")
-    .select("id, status")
-    .eq("playlist_id", playlistId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (fetchError) throw fetchError;
-  if (!row) {
-    const err: any = new Error("Invite not found");
-    err.status = 404;
-    throw err;
-  }
-  if (row.status !== "pending") {
-    const err: any = new Error("Invite has already been responded to");
-    err.status = 409;
-    throw err;
-  }
-
-  const { error } = await supabase
+  const { data: updated, error: updateError } = await supabase
     .from("playlist_collaborators")
     .update({ status })
-    .eq("id", row.id);
+    .eq("playlist_id", playlistId)
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
 
-  if (error) throw error;
+  if (updateError) throw updateError;
+
+  if (!updated) {
+    // No row was updated — determine why
+    const { data: existing, error: lookupError } = await supabase
+      .from("playlist_collaborators")
+      .select("id")
+      .eq("playlist_id", playlistId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (lookupError) throw lookupError;
+
+    const err: any = existing
+      ? new Error("Invite has already been responded to")
+      : new Error("Invite not found");
+    err.status = existing ? 409 : 404;
+    throw err;
+  }
 };
