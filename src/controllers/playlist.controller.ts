@@ -5,11 +5,13 @@ import * as playlistService from "../services/playlist.service.js";
 export const getCollaborators = async (req: AuthRequest, res: Response) => {
   const id = req.params.id as string;
   try {
-    const collaborators = await playlistService.getCollaborators(id);
+    const collaborators = await playlistService.getCollaborators(id, req.user.id);
     return res.json(collaborators);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Get Collaborators Error:", error);
-    return res.status(500).json({ error: "Internal Server Error" });
+    const status = error.status ?? 500;
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
   }
 };
 
@@ -24,7 +26,8 @@ export const addCollaborator = async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error("Add Collaborator Error:", error);
     const status = error.status ?? 500;
-    return res.status(status).json({ error: error.message ?? "Internal Server Error" });
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
   }
 };
 
@@ -36,7 +39,8 @@ export const removeCollaborator = async (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error("Remove Collaborator Error:", error);
     const status = error.status ?? 500;
-    return res.status(status).json({ error: error.message ?? "Internal Server Error" });
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
   }
 };
 

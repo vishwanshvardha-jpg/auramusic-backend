@@ -1,6 +1,20 @@
 import { supabase } from "../config/supabase.js";
 import { iTunesTrack } from "./library.service.js";
 
+const listAllUsers = async () => {
+  const allUsers: any[] = [];
+  let page = 1;
+  const perPage = 1000;
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, per_page: perPage });
+    if (error) throw error;
+    allUsers.push(...data.users);
+    if (data.users.length < perPage) break;
+    page++;
+  }
+  return allUsers;
+};
+
 export const getPlaylists = async (userId: string) => {
   console.log("📥 Fetching playlists for user:", userId);
 
@@ -82,7 +96,39 @@ export const getPlaylistSongs = async (playlistId: string) => {
   }));
 };
 
-export const getCollaborators = async (playlistId: string) => {
+export const getCollaborators = async (playlistId: string, callerId: string) => {
+  // Verify playlist exists and check caller is owner or collaborator
+  const { data: playlist, error: playlistError } = await supabase
+    .from("playlists")
+    .select("user_id")
+    .eq("id", playlistId)
+    .maybeSingle();
+
+  if (playlistError) throw playlistError;
+  if (!playlist) {
+    const err: any = new Error("Playlist not found");
+    err.status = 404;
+    throw err;
+  }
+
+  const isOwner = playlist.user_id === callerId;
+
+  if (!isOwner) {
+    const { data: collab, error: collabError } = await supabase
+      .from("playlist_collaborators")
+      .select("id")
+      .eq("playlist_id", playlistId)
+      .eq("user_id", callerId)
+      .maybeSingle();
+
+    if (collabError) throw collabError;
+    if (!collab) {
+      const err: any = new Error("Not authorized to view collaborators");
+      err.status = 403;
+      throw err;
+    }
+  }
+
   const { data, error } = await supabase
     .from("playlist_collaborators")
     .select("id, user_id, role, created_at")
@@ -90,11 +136,9 @@ export const getCollaborators = async (playlistId: string) => {
 
   if (error) throw error;
 
-  // Resolve emails via admin API
-  const { data: usersData, error: usersError } = await supabase.auth.admin.listUsers();
-  if (usersError) throw usersError;
-
-  const userMap = new Map(usersData.users.map(u => [u.id, u.email ?? ""]));
+  // Resolve emails via admin API (paginated)
+  const allUsers = await listAllUsers();
+  const userMap = new Map(allUsers.map(u => [u.id, u.email ?? ""]));
 
   return (data ?? []).map(row => ({
     ...row,
@@ -118,11 +162,9 @@ export const addCollaborator = async (playlistId: string, ownerUserId: string, i
     throw err;
   }
 
-  // Look up invitee by email
-  const { data: usersData, error: usersError } = await supabase.auth.admin.listUsers();
-  if (usersError) throw usersError;
-
-  const invitee = usersData.users.find(u => u.email === inviteeEmail);
+  // Look up invitee by email (paginated)
+  const allUsers = await listAllUsers();
+  const invitee = allUsers.find(u => u.email === inviteeEmail);
   if (!invitee) {
     const err: any = new Error("User not found");
     err.status = 404;
@@ -176,16 +218,23 @@ export const removeCollaborator = async (playlistId: string, ownerUserId: string
 
 export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, callerId: string) => {
   // Verify caller is the owner or an editor collaborator
-  const { data: playlist } = await supabase
+  const { data: playlist, error: playlistError } = await supabase
     .from("playlists")
     .select("user_id")
     .eq("id", playlistId)
     .maybeSingle();
 
-  const isOwner = playlist?.user_id === callerId;
+  if (playlistError) throw playlistError;
+  if (!playlist) {
+    const err: any = new Error("Playlist not found");
+    err.status = 404;
+    throw err;
+  }
+
+  const isOwner = playlist.user_id === callerId;
 
   if (!isOwner) {
-    const { data: collab } = await supabase
+    const { data: collab, error: collabError } = await supabase
       .from("playlist_collaborators")
       .select("id")
       .eq("playlist_id", playlistId)
@@ -193,6 +242,7 @@ export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, 
       .eq("role", "editor")
       .maybeSingle();
 
+    if (collabError) throw collabError;
     if (!collab) {
       const err: any = new Error("Not authorized to add songs to this playlist");
       err.status = 403;
