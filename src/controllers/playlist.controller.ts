@@ -101,3 +101,34 @@ export const addSong = async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 };
+
+export const getPendingInvites = async (req: AuthRequest, res: Response) => {
+  try {
+    const invites = await playlistService.getPendingInvites(req.user.id);
+    return res.json(invites);
+  } catch (error: any) {
+    console.error("Get Pending Invites Error:", error);
+    const status = error.status ?? 500;
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
+  }
+};
+
+export const respondToInvite = async (req: AuthRequest, res: Response) => {
+  const id = req.params.id as string;
+  const { status } = req.body as { status?: string };
+
+  if (status !== "accepted" && status !== "declined") {
+    return res.status(400).json({ error: "status must be 'accepted' or 'declined'" });
+  }
+
+  try {
+    await playlistService.respondToInvite(id, req.user.id, status);
+    return res.status(204).send();
+  } catch (error: any) {
+    console.error("Respond To Invite Error:", error);
+    const statusCode = error.status ?? 500;
+    const body = statusCode >= 500 ? "Internal Server Error" : error.message;
+    return res.status(statusCode).json({ error: body });
+  }
+};

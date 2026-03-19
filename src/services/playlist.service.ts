@@ -30,11 +30,12 @@ export const getPlaylists = async (userId: string) => {
     throw ownedError;
   }
 
-  // Playlists shared with this user as a collaborator
+  // Playlists shared with this user as a collaborator (accepted invites only)
   const { data: collabRows, error: collabError } = await supabase
     .from("playlist_collaborators")
     .select("playlist_id, playlists(*, playlist_songs(count))")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("status", "accepted");
 
   if (collabError) {
     console.error("❌ Database Error (collaborator playlists):", collabError.message);
@@ -131,7 +132,7 @@ export const getCollaborators = async (playlistId: string, callerId: string) => 
 
   const { data, error } = await supabase
     .from("playlist_collaborators")
-    .select("id, user_id, role, created_at")
+    .select("id, user_id, role, status, created_at")
     .eq("playlist_id", playlistId);
 
   if (error) throw error;
@@ -179,7 +180,7 @@ export const addCollaborator = async (playlistId: string, ownerUserId: string, i
 
   const { error } = await supabase
     .from("playlist_collaborators")
-    .insert({ playlist_id: playlistId, user_id: invitee.id, role: "editor" });
+    .insert({ playlist_id: playlistId, user_id: invitee.id, role: "editor", status: "pending" });
 
   if (error) {
     if (error.code === "23505") {
@@ -282,4 +283,59 @@ export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, 
 
   if (error) throw error;
   return { status: "added" };
+};
+
+export const getPendingInvites = async (userId: string) => {
+  const { data, error } = await supabase
+    .from("playlist_collaborators")
+    .select("id, playlist_id, role, created_at, playlists(id, name, user_id)")
+    .eq("user_id", userId)
+    .eq("status", "pending");
+
+  if (error) throw error;
+
+  const allUsers = await listAllUsers();
+  const userMap = new Map(allUsers.map(u => [u.id, u.email ?? ""]));
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    playlist_id: row.playlist_id,
+    playlist_name: row.playlists?.name ?? "",
+    owner_user_id: row.playlists?.user_id ?? "",
+    owner_email: userMap.get(row.playlists?.user_id ?? "") ?? "",
+    role: row.role,
+    created_at: row.created_at,
+  }));
+};
+
+export const respondToInvite = async (
+  playlistId: string,
+  userId: string,
+  status: "accepted" | "declined"
+) => {
+  const { data: row, error: fetchError } = await supabase
+    .from("playlist_collaborators")
+    .select("id, status")
+    .eq("playlist_id", playlistId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+  if (!row) {
+    const err: any = new Error("Invite not found");
+    err.status = 404;
+    throw err;
+  }
+  if (row.status !== "pending") {
+    const err: any = new Error("Invite has already been responded to");
+    err.status = 409;
+    throw err;
+  }
+
+  const { error } = await supabase
+    .from("playlist_collaborators")
+    .update({ status })
+    .eq("id", row.id);
+
+  if (error) throw error;
 };
