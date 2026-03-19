@@ -6,7 +6,7 @@ const listAllUsers = async () => {
   let page = 1;
   const perPage = 1000;
   while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, per_page: perPage });
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
     if (error) throw error;
     allUsers.push(...data.users);
     if (data.users.length < perPage) break;
@@ -30,11 +30,12 @@ export const getPlaylists = async (userId: string) => {
     throw ownedError;
   }
 
-  // Playlists shared with this user as a collaborator
+  // Playlists shared with this user as a collaborator (accepted invites only)
   const { data: collabRows, error: collabError } = await supabase
     .from("playlist_collaborators")
     .select("playlist_id, playlists(*, playlist_songs(count))")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("status", "accepted");
 
   if (collabError) {
     console.error("❌ Database Error (collaborator playlists):", collabError.message);
@@ -119,6 +120,7 @@ export const getCollaborators = async (playlistId: string, callerId: string) => 
       .select("id")
       .eq("playlist_id", playlistId)
       .eq("user_id", callerId)
+      .eq("status", "accepted")
       .maybeSingle();
 
     if (collabError) throw collabError;
@@ -131,7 +133,7 @@ export const getCollaborators = async (playlistId: string, callerId: string) => 
 
   const { data, error } = await supabase
     .from("playlist_collaborators")
-    .select("id, user_id, role, created_at")
+    .select("id, user_id, role, status, created_at")
     .eq("playlist_id", playlistId);
 
   if (error) throw error;
@@ -179,7 +181,7 @@ export const addCollaborator = async (playlistId: string, ownerUserId: string, i
 
   const { error } = await supabase
     .from("playlist_collaborators")
-    .insert({ playlist_id: playlistId, user_id: invitee.id, role: "editor" });
+    .insert({ playlist_id: playlistId, user_id: invitee.id, role: "editor", status: "pending" });
 
   if (error) {
     if (error.code === "23505") {
@@ -240,6 +242,7 @@ export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, 
       .eq("playlist_id", playlistId)
       .eq("user_id", callerId)
       .eq("role", "editor")
+      .eq("status", "accepted")
       .maybeSingle();
 
     if (collabError) throw collabError;
@@ -282,4 +285,62 @@ export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, 
 
   if (error) throw error;
   return { status: "added" };
+};
+
+export const getPendingInvites = async (userId: string) => {
+  const { data, error } = await supabase
+    .from("playlist_collaborators")
+    .select("id, playlist_id, role, created_at, playlists(id, name, user_id)")
+    .eq("user_id", userId)
+    .eq("status", "pending");
+
+  if (error) throw error;
+
+  const allUsers = await listAllUsers();
+  const userMap = new Map(allUsers.map(u => [u.id, u.email ?? ""]));
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    playlist_id: row.playlist_id,
+    playlist_name: row.playlists?.name ?? "",
+    owner_user_id: row.playlists?.user_id ?? "",
+    owner_email: userMap.get(row.playlists?.user_id ?? "") ?? "",
+    role: row.role,
+    created_at: row.created_at,
+  }));
+};
+
+export const respondToInvite = async (
+  playlistId: string,
+  userId: string,
+  status: "accepted" | "declined"
+) => {
+  const { data: updated, error: updateError } = await supabase
+    .from("playlist_collaborators")
+    .update({ status })
+    .eq("playlist_id", playlistId)
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) throw updateError;
+
+  if (!updated) {
+    // No row was updated — determine why
+    const { data: existing, error: lookupError } = await supabase
+      .from("playlist_collaborators")
+      .select("id")
+      .eq("playlist_id", playlistId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (lookupError) throw lookupError;
+
+    const err: any = existing
+      ? new Error("Invite has already been responded to")
+      : new Error("Invite not found");
+    err.status = existing ? 409 : 404;
+    throw err;
+  }
 };
