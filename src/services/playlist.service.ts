@@ -62,15 +62,45 @@ export const getPlaylists = async (userId: string) => {
   return combined;
 };
 
-export const createPlaylist = async (userId: string, name: string) => {
+export const createPlaylist = async (userId: string, name: string, imageUrl?: string) => {
   const { data, error } = await supabase
     .from("playlists")
-    .insert({ user_id: userId, name })
+    .insert({ user_id: userId, name, ...(imageUrl ? { image_url: imageUrl } : {}) })
     .select()
     .single();
 
   if (error) throw error;
   return data;
+};
+
+export const leavePlaylist = async (userId: string, playlistId: string) => {
+  // Verify the user is actually a collaborator (not the owner)
+  const { data: playlist, error: playlistError } = await supabase
+    .from("playlists")
+    .select("user_id")
+    .eq("id", playlistId)
+    .maybeSingle();
+
+  if (playlistError) throw playlistError;
+  if (!playlist) {
+    const err: any = new Error("Playlist not found");
+    err.status = 404;
+    throw err;
+  }
+
+  if (playlist.user_id === userId) {
+    const err: any = new Error("Owners cannot leave their own playlist — delete it instead");
+    err.status = 400;
+    throw err;
+  }
+
+  const { error } = await supabase
+    .from("playlist_collaborators")
+    .delete()
+    .eq("playlist_id", playlistId)
+    .eq("user_id", userId);
+
+  if (error) throw error;
 };
 
 export const deletePlaylist = async (userId: string, playlistId: string) => {
