@@ -67,6 +67,23 @@ export const createPlaylist = async (req: AuthRequest, res: Response) => {
   }
 };
 
+export const updatePlaylist = async (req: AuthRequest, res: Response) => {
+  const id = req.params.id as string;
+  const { image_url } = req.body as { image_url?: string };
+
+  if (!image_url) return res.status(400).json({ error: "Missing image_url" });
+
+  try {
+    await playlistService.updatePlaylist(req.user.id, id, { image_url });
+    return res.status(204).send();
+  } catch (error: any) {
+    console.error("Update Playlist Error:", error);
+    const status = error.status ?? 500;
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
+  }
+};
+
 export const leavePlaylist = async (req: AuthRequest, res: Response) => {
   const id = req.params.id as string;
   try {

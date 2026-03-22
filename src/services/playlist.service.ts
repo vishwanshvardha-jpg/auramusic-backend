@@ -73,6 +73,34 @@ export const createPlaylist = async (userId: string, name: string, imageUrl?: st
   return data;
 };
 
+export const updatePlaylist = async (userId: string, playlistId: string, fields: { image_url?: string }) => {
+  const { data: playlist, error: ownerError } = await supabase
+    .from("playlists")
+    .select("user_id")
+    .eq("id", playlistId)
+    .maybeSingle();
+
+  if (ownerError) throw ownerError;
+  if (!playlist) {
+    const err: any = new Error("Playlist not found");
+    err.status = 404;
+    throw err;
+  }
+
+  if (playlist.user_id !== userId) {
+    const err: any = new Error("Only the owner can update this playlist");
+    err.status = 403;
+    throw err;
+  }
+
+  const { error } = await supabase
+    .from("playlists")
+    .update(fields)
+    .eq("id", playlistId);
+
+  if (error) throw error;
+};
+
 export const leavePlaylist = async (userId: string, playlistId: string) => {
   // Verify the user is actually a collaborator (not the owner)
   const { data: playlist, error: playlistError } = await supabase
