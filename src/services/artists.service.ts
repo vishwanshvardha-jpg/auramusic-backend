@@ -17,12 +17,14 @@ export const toggleFollowArtist = async (
   artworkUrl: string
 ) => {
   // Check if already following
-  const { data: existing } = await supabase
+  const { data: existing, error: lookupError } = await supabase
     .from("followed_artists")
     .select("id")
     .eq("user_id", userId)
     .eq("artist_name", artistName)
     .maybeSingle();
+
+  if (lookupError) throw lookupError;
 
   if (existing) {
     const { error } = await supabase

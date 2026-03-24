@@ -15,15 +15,22 @@ export const getFollowedArtists = async (req: AuthRequest, res: Response) => {
 export const toggleFollow = async (req: AuthRequest, res: Response) => {
   const { artistName, artworkUrl } = req.body;
 
-  if (!artistName || !artworkUrl) {
-    return res.status(400).json({ error: "Missing artistName or artworkUrl" });
+  if (typeof artistName !== "string" || typeof artworkUrl !== "string") {
+    return res.status(400).json({ error: "artistName and artworkUrl must be strings" });
+  }
+
+  const trimmedArtistName = artistName.trim();
+  const trimmedArtworkUrl = artworkUrl.trim();
+
+  if (!trimmedArtistName || !trimmedArtworkUrl) {
+    return res.status(400).json({ error: "artistName and artworkUrl cannot be empty" });
   }
 
   try {
     const result = await artistsService.toggleFollowArtist(
       req.user.id,
-      artistName,
-      artworkUrl
+      trimmedArtistName,
+      trimmedArtworkUrl
     );
     return res.json(result);
   } catch (error) {
