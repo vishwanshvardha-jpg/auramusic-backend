@@ -14,7 +14,7 @@ export const getLikedSongs = async (userId: string) => {
   console.log("📥 Fetching liked songs for user:", userId);
   const { data, error } = await supabase
     .from("liked_songs")
-    .select("*")
+    .select("user_id, track_id, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -23,7 +23,10 @@ export const getLikedSongs = async (userId: string) => {
     throw error;
   }
   console.log(`✅ Found ${data?.length || 0} liked songs`);
-  return data;
+  return (data ?? []).map(row => ({
+    track_id: row.track_id,
+    created_at: row.created_at,
+  }));
 };
 
 export const toggleLikeSong = async (userId: string, track: iTunesTrack, isLiked: boolean) => {
@@ -49,7 +52,6 @@ export const toggleLikeSong = async (userId: string, track: iTunesTrack, isLiked
     const { error } = await supabase.from("liked_songs").insert({
       user_id: userId,
       track_id: track.trackId,
-      track_data: track,
     });
     if (error) throw error;
     return { status: "liked" };
