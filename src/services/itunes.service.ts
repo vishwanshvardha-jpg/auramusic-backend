@@ -61,3 +61,27 @@ export async function searchTracks(query: string, limit: number = 20): Promise<i
     (track) => track.wrapperType === "track" && track.kind === "song" && track.previewUrl
   );
 }
+
+// ─── Lookup Service ────────────────────────────────────────────────
+
+export async function lookupTracks(trackIds: number[]): Promise<iTunesTrack[]> {
+  if (trackIds.length === 0) return [];
+
+  // iTunes lookup supports up to 200 IDs per request
+  const chunks: number[][] = [];
+  for (let i = 0; i < trackIds.length; i += 200) chunks.push(trackIds.slice(i, i + 200));
+
+  const results: iTunesTrack[] = [];
+  for (const chunk of chunks) {
+    const response = await fetch(
+      `https://itunes.apple.com/lookup?id=${chunk.join(",")}&entity=song`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!response.ok) throw new Error(`iTunes lookup failed: ${response.status}`);
+    const data = (await response.json()) as iTunesSearchResponse;
+    results.push(...data.results.filter(
+      (t) => t.wrapperType === "track" && t.kind === "song"
+    ));
+  }
+  return results;
+}

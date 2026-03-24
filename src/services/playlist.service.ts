@@ -144,14 +144,15 @@ export const deletePlaylist = async (userId: string, playlistId: string) => {
 export const getPlaylistSongs = async (playlistId: string) => {
   const { data, error } = await supabase
     .from("playlist_songs")
-    .select("*")
+    .select("track_id, position, created_at")
     .eq("playlist_id", playlistId)
-    .order("created_at", { ascending: false });
+    .order("position", { ascending: true });
 
   if (error) throw error;
-  return data.map(ps => ({
-    ...ps.track_data,
-    addedAt: ps.created_at
+  return (data ?? []).map(ps => ({
+    track_id: ps.track_id,
+    position: ps.position,
+    added_at: ps.created_at,
   }));
 };
 
@@ -337,8 +338,7 @@ export const addSongToPlaylist = async (playlistId: string, track: iTunesTrack, 
     .insert({
       playlist_id: playlistId,
       track_id: track.trackId,
-      track_data: track,
-      position: nextPosition
+      position: nextPosition,
     });
 
   if (error) throw error;
