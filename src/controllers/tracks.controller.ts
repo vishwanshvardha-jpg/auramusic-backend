@@ -8,8 +8,23 @@ export const lookupTracks = async (req: Request, res: Response) => {
   const raw = req.query.ids as string;
   if (!raw) return res.status(400).json({ error: "Missing 'ids' query parameter" });
 
-  const trackIds = raw.split(",").map(Number).filter(Boolean);
+  const tokens = raw.split(",").map((t) => t.trim());
+  const validIds: number[] = [];
+  for (const token of tokens) {
+    if (!/^\d+$/.test(token)) {
+      return res.status(400).json({ error: `Invalid track ID: "${token}"` });
+    }
+    const n = parseInt(token, 10);
+    if (n <= 0) {
+      return res.status(400).json({ error: `Track ID must be a positive integer: "${token}"` });
+    }
+    validIds.push(n);
+  }
+  const trackIds = [...new Set(validIds)];
   if (trackIds.length === 0) return res.json({ tracks: [] });
+  if (trackIds.length > 100) {
+    return res.status(400).json({ error: "Too many IDs — maximum 100 per request" });
+  }
 
   try {
     const cached: itunesService.iTunesTrack[] = [];
@@ -20,11 +35,19 @@ export const lookupTracks = async (req: Request, res: Response) => {
         const keys = trackIds.map((id) => `track:${id}`);
         const values = await redis.mget(keys);
         values.forEach((val, i) => {
-          if (val) cached.push(JSON.parse(val) as itunesService.iTunesTrack);
-          else missing.push(trackIds[i]);
+          if (val) {
+            try {
+              cached.push(JSON.parse(val) as itunesService.iTunesTrack);
+            } catch {
+              missing.push(trackIds[i]);
+            }
+          } else {
+            missing.push(trackIds[i]);
+          }
         });
       } catch (err) {
         console.error("Redis mget error:", err);
+        cached.length = 0;
         missing.push(...trackIds); // fail-open: treat all as cache miss
       }
     } else {
