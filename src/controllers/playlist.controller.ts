@@ -164,3 +164,46 @@ export const respondToInvite = async (req: AuthRequest, res: Response) => {
     return res.status(statusCode).json({ error: body });
   }
 };
+
+// ─── Share Token ─────────────────────────────────────────────────────────────
+
+export const getPublicPlaylist = async (req: AuthRequest, res: Response) => {
+  const { token } = req.params as { token: string };
+  try {
+    const data = await playlistService.getPublicPlaylist(token);
+    if (!data) return res.status(404).json({ error: "Playlist not found or link has expired" });
+    return res.json(data);
+  } catch (error: any) {
+    console.error("Get Public Playlist Error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+export const generateShareToken = async (req: AuthRequest, res: Response) => {
+  const id = req.params.id as string;
+  try {
+    const token = await playlistService.generateShareToken(id, req.user.id);
+    return res.json({ token });
+  } catch (error: any) {
+    console.error("Generate Share Token Error:", error);
+    const status = error.status ?? 500;
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
+  }
+};
+
+export const sendShareEmail = async (req: AuthRequest, res: Response) => {
+  const id = req.params.id as string;
+  const { email } = req.body as { email?: string };
+  if (!email) return res.status(400).json({ error: "Missing email" });
+
+  try {
+    await playlistService.sendShareEmail(id, req.user.id, email);
+    return res.status(204).send();
+  } catch (error: any) {
+    console.error("Send Share Email Error:", error);
+    const status = error.status ?? 500;
+    const body = status >= 500 ? "Internal Server Error" : error.message;
+    return res.status(status).json({ error: body });
+  }
+};

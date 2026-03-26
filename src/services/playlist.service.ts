@@ -1,3 +1,4 @@
+import { APP_URL, EMAIL_FROM, resend } from "../config/resend.js";
 import { supabase } from "../config/supabase.js";
 import { iTunesTrack } from "./library.service.js";
 
@@ -399,6 +400,157 @@ export const respondToInvite = async (
       ? new Error("Invite has already been responded to")
       : new Error("Invite not found");
     err.status = existing ? 409 : 404;
+    throw err;
+  }
+};
+
+// ─── Share Token ─────────────────────────────────────────────────────────────
+
+export const generateShareToken = async (playlistId: string, ownerUserId: string): Promise<string> => {
+  // Verify caller owns the playlist
+  const { data: playlist, error: ownerError } = await supabase
+    .from("playlists")
+    .select("id, name")
+    .eq("id", playlistId)
+    .eq("user_id", ownerUserId)
+    .maybeSingle();
+
+  if (ownerError) throw ownerError;
+  if (!playlist) {
+    const err: any = new Error("Not the playlist owner");
+    err.status = 403;
+    throw err;
+  }
+
+  // Upsert: return existing token if one already exists for this playlist
+  const { data, error } = await supabase
+    .from("playlist_share_tokens")
+    .upsert({ playlist_id: playlistId, created_by: ownerUserId }, { onConflict: "playlist_id" })
+    .select("token")
+    .single();
+
+  if (error) throw error;
+  return data.token;
+};
+
+export const getPublicPlaylist = async (token: string): Promise<{ playlist: any; tracks: any[] } | null> => {
+  // Look up share token
+  const { data: tokenRow, error: tokenError } = await supabase
+    .from("playlist_share_tokens")
+    .select("playlist_id")
+    .eq("token", token)
+    .maybeSingle();
+
+  if (tokenError) throw tokenError;
+  if (!tokenRow) return null;
+
+  const playlistId = tokenRow.playlist_id;
+
+  // Fetch playlist metadata
+  const { data: playlist, error: playlistError } = await supabase
+    .from("playlists")
+    .select("id, name, description, image_url, user_id, created_at")
+    .eq("id", playlistId)
+    .maybeSingle();
+
+  if (playlistError) throw playlistError;
+  if (!playlist) return null;
+
+  // Fetch songs (track IDs + positions only — no track_data stored in DB per architecture)
+  const { data: songs, error: songsError } = await supabase
+    .from("playlist_songs")
+    .select("track_id, position, created_at")
+    .eq("playlist_id", playlistId)
+    .order("position", { ascending: true });
+
+  if (songsError) throw songsError;
+
+  const tracks = (songs ?? []).map(s => ({
+    track_id: s.track_id,
+    position: s.position,
+    added_at: s.created_at,
+  }));
+
+  return { playlist, tracks };
+};
+
+export const sendShareEmail = async (playlistId: string, ownerUserId: string, recipientEmail: string): Promise<void> => {
+  // Generate (or fetch existing) share token
+  const token = await generateShareToken(playlistId, ownerUserId);
+
+  // Get playlist name + owner email for the email template
+  const { data: playlist } = await supabase
+    .from("playlists")
+    .select("name")
+    .eq("id", playlistId)
+    .maybeSingle();
+
+  const allUsers = await listAllUsers();
+  const owner = allUsers.find(u => u.id === ownerUserId);
+  const ownerName = owner?.email?.split("@")[0] ?? "Someone";
+  const playlistName = playlist?.name ?? "a playlist";
+  const shareUrl = `${APP_URL}/share/${token}`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0f;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="background:#111118;border-radius:16px;border:1px solid rgba(255,255,255,0.08);overflow:hidden;">
+        <tr>
+          <td style="padding:32px 36px 24px;border-bottom:1px solid rgba(255,255,255,0.06);">
+            <p style="margin:0;font-size:13px;font-weight:900;letter-spacing:0.2em;color:#00d4aa;text-transform:uppercase;">Repose Music</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 36px;">
+            <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#ffffff;line-height:1.3;">
+              ${ownerName} shared a playlist with you
+            </p>
+            <p style="margin:0 0 28px;font-size:15px;color:rgba(255,255,255,0.5);line-height:1.5;">
+              You've been invited to listen to <strong style="color:rgba(255,255,255,0.8);">${playlistName}</strong> on Repose Music.
+            </p>
+            <a href="${shareUrl}"
+               style="display:inline-block;background:#00d4aa;color:#000000;font-size:13px;font-weight:900;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;padding:14px 28px;border-radius:100px;">
+              Open Playlist
+            </a>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 36px;border-top:1px solid rgba(255,255,255,0.06);">
+            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.25);">
+              Or copy this link: <a href="${shareUrl}" style="color:#00d4aa;text-decoration:none;">${shareUrl}</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  // Idempotency key prevents duplicate emails if the request is retried
+  const idempotencyKey = `share-email/${playlistId}/${Buffer.from(recipientEmail).toString("base64url")}`;
+
+  const text = `${ownerName} shared "${playlistName}" with you on Repose Music.\n\nOpen the playlist: ${shareUrl}`;
+
+  const { error } = await resend.emails.send(
+    {
+      from: EMAIL_FROM,
+      to: recipientEmail,
+      subject: `${ownerName} shared "${playlistName}" with you on Repose Music`,
+      html,
+      text,
+    },
+    { idempotencyKey }
+  );
+
+  if (error) {
+    console.error("Resend error:", error);
+    const err: any = new Error("Failed to send email");
+    err.status = 500;
     throw err;
   }
 };
